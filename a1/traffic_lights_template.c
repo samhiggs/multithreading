@@ -22,7 +22,7 @@ typedef struct vehicle_object
     char direction[4];
 } vehicle_t;
 
-enum Direction { n2s, s2n, e2w, w2e, n2w, s2e, } dctn;
+enum direction{N2S, S2N, E2W, W2E, N2W, S2E};
 
 void * mini_controller_routine(void *);
 void * vehicle_routine(void *);
@@ -73,7 +73,6 @@ int main(int argc, char ** argv)
         fprintf(stderr, "mini controller out of memory\n");
         exit(2);
     }
-
     //*****MAKE SURE I REMOVE THIS BEFORE SUBMITTING!*******//
     if(argc != 5)
     {
@@ -127,43 +126,65 @@ int main(int argc, char ** argv)
         }
     }
 
-    //allocate memory for vehicles 
+    //allocate memory for vehicles and threads
     vehicle = calloc(n_vehicles, sizeof(vehicle_t));
+    vehicle_thread_ids = calloc(n_vehicles, sizeof(pthread_t)); //mini_controller objects
+    if (vehicle_thread_ids == NULL)
+    { 
+        fprintf(stderr, "vehicle thread out of memory\n");
+        exit(2);
+    }
 	//create vehicles threads
     ns_c = sn_c = ew_c = we_c = nw_c = se_c = 0;
-    srand(time(0));
+    // srand(time(0));
     for(i = 0; i < n_vehicles; ++i) 
     {
 		sleep((int)rand() % vehicle_rate); 
 		drct = (int)rand()% 6;
+        printf("%d\n", n_vehicles);
         switch(drct)
         {
-            case n2s: 
+            case N2S: 
+                printf("in case %d\n", drct);
                 strncpy(vehicle[i].direction, "n2s", 4);
                 vehicle[i].id = ns_c;
                 ++ns_c;
-            case s2n: 
+                break;
+            case S2N:
+                printf("in case %d\n", drct); 
                 strncpy(vehicle[i].direction, "s2n", 4);
                 vehicle[i].id = sn_c;
                 ++sn_c;
-            case e2w: 
+                break;
+            case E2W:
+                printf("in case %d\n", drct); 
                 strncpy(vehicle[i].direction, "e2w", 4);
                 vehicle[i].id = ew_c;
                 ++ew_c;
-            case w2e: 
+                break;
+            case W2E:
+                printf("in case %d\n", drct); 
                 strncpy(vehicle[i].direction, "w2e", 4);
                 vehicle[i].id = we_c;
                 ++we_c;
-            case n2w: 
+                break;
+            case N2W:
+                printf("in case %d\n", drct); 
                 strncpy(vehicle[i].direction, "n2w", 4);
                 vehicle[i].id = nw_c;
                 ++nw_c;
-            case s2e: 
+                break;
+            case S2E:
+                printf("in case %d\n", drct); 
                 strncpy(vehicle[i].direction, "s2e", 4);
                 vehicle[i].id = se_c;
                 ++se_c;
+                break;
+            default:
+                fprintf(stderr, "Vehicle doesn't have direction %d\n", drct);
+                exit(7);
         }
-        printf("Created a vehicle of direction %s\n...creating thread\n", vehicle[i].direction);
+        printf("Creating a vehicle of direction %s\n...creating thread\n", vehicle[i].direction);
 		rc = pthread_create(&vehicle_thread_ids[i], NULL, vehicle_routine, (void *)&vehicle[i]);
 		if (rc) {
 			printf("ERROR; return code from pthread_create(vehicle) is %d\n", rc);
