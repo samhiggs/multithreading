@@ -9,15 +9,13 @@
 //mini_controller and vehicle structs
 //you may make changes if necessary
 
-typedef struct mini_controller_object
-{
+typedef struct mini_controller_object{
     int id;
     int time_green;
 	int min_interval;
 } mini_cntrl_t;
 
-typedef struct vehicle_object
-{
+typedef struct vehicle_object{
     int id;
     char direction[4];
 } vehicle_t;
@@ -74,8 +72,7 @@ int main(int argc, char ** argv)
         exit(2);
     }
     //*****MAKE SURE I REMOVE THIS BEFORE SUBMITTING!*******//
-    if(argc != 5)
-    {
+    if(argc != 5){
         // ask for the total number of vehicles.
         printf("Enter the total number of vehicles (int): ");
         scanf("%d", &n_vehicles);
@@ -96,8 +93,7 @@ int main(int argc, char ** argv)
         printf("Enter green time for right-turning vehicles on trunk road (int): ");
         scanf("%d", &g_t);
         mini_controller[2].time_green = g_t;
-    } else 
-    {
+    } else {
         n_vehicles = atoi(argv[1]);
         vehicle_rate = atoi(argv[2]);
         min_interval = atoi(argv[3]);
@@ -106,10 +102,12 @@ int main(int argc, char ** argv)
         mini_controller[1].time_green = green_time;
         mini_controller[2].time_green = green_time;
     }
+
+    //Start a vehicle counter in each direction to make sure they all finish 
+    //or if not, where it gets blocked.
 	v_counter = calloc(6, sizeof(int));
 	//create mini_controller threads 
-    if (mini_controller == NULL)
-    {
+    if (mini_controller == NULL){
         fprintf(stderr, "mini_controller out of memory\n");
         exit(2);
     }
@@ -136,8 +134,7 @@ int main(int argc, char ** argv)
 	//create vehicles threads
     ns_c = sn_c = ew_c = we_c = nw_c = se_c = 0;
     // srand(time(0));
-    for(i = 0; i < n_vehicles; ++i) 
-    {
+    for(i = 0; i < n_vehicles; ++i){
 		sleep((int)rand() % vehicle_rate); 
 		drct = (int)rand()% 6;
         switch(drct)
@@ -196,7 +193,7 @@ int main(int argc, char ** argv)
 
     printf("\n");
     for(i = 0;i < n_cntrls; ++i){
-        pthread_cancel(mini_cntrl_thread_ids[i]);
+        pthread_join(mini_cntrl_thread_ids[i], NULL);
     }
 		
     //destroy mutex and condition variable objects
@@ -218,6 +215,39 @@ int main(int argc, char ** argv)
 void * mini_controller_routine(void * arg) {
     mini_cntrl_t * c = (mini_cntrl_t*)arg;
     printf("Mini controller %d exists!\n", c->id);
+    int idx = 0;
+    while(idx < 10){
+        switch(c->id){
+            case(0):
+                pthread_mutex_lock(&intersection_mutex);
+                sleep(c->time_green);
+                printf("Cars are currently crossing the NS intersection\n");
+                pthread_cond_signal(&ew_mini_cntrl);
+                pthread_mutex_unlock(&intersection_mutex);
+                pthread_cond_wait(&ns_mini_cntrl, &intersection_mutex);
+                break;
+            
+            case(1):
+                printf("Cars are currently crossing the EW intersection\n");
+                pthread_cond_wait(&ew_mini_cntrl, &intersection_mutex);
+                sleep(c->time_green);
+                pthread_cond_signal(&turn_mini_cntrl);
+                pthread_mutex_unlock(&intersection_mutex);
+                break;
+
+            case(2):
+                printf("Cars are currently turning across NW and SE\n");
+                pthread_cond_wait(&turn_mini_cntrl, &intersection_mutex);
+                sleep(c->time_green);
+                pthread_cond_signal(&ns_mini_cntrl);
+                pthread_mutex_unlock(&intersection_mutex);
+                break;
+            default:
+                fprintf(stderr, "mini controller routine is out of range\n");
+                break;
+        }
+        ++idx;
+    }
 }
 
 void * vehicle_routine(void * arg){
