@@ -28,9 +28,11 @@ void * mini_controller_routine(void *);
 void * vehicle_routine(void *);
 
 pthread_mutex_t intersection_mutex = PTHREAD_MUTEX_INITIALIZER;
-
+pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t ns_mini_cntrl, ew_mini_cntrl, turn_mini_cntrl;
 vehicle_t *vehicle;
+int *v_counter;
+char directions[6][4] = {"n2s", "s2n", "e2w", "w2e", "n2w", "s2e"};
 int main(int argc, char ** argv)
 {
     int n_vehicles; //total number of vehicles
@@ -42,21 +44,19 @@ int main(int argc, char ** argv)
     int n_cntrls = 3; //number of mini controllers.
     pthread_t *vehicle_thread_ids, *mini_cntrl_thread_ids;
     mini_cntrl_t *mini_controller;
+
     rc = pthread_cond_init(&ns_mini_cntrl, NULL);
-    if(rc)
-    {
+    if(rc){
         fprintf(stderr, "ERROR; return code from pthread_cond_init(ns) is %d\n", rc);
         exit(1);
 	}
     rc = pthread_cond_init(&ew_mini_cntrl, NULL);
-    if(rc)
-    {
+    if(rc){
         fprintf(stderr, "ERROR; return code from pthread_cond_init(ew) is %d\n", rc);
         exit(1);
 	}
     rc = pthread_cond_init(&turn_mini_cntrl, NULL);
-    if(rc)
-    {
+    if(rc){
         fprintf(stderr, "ERROR; return code from pthread_cond_init(turn)  is %d\n", rc);
         exit(1);
 	}
@@ -106,7 +106,7 @@ int main(int argc, char ** argv)
         mini_controller[1].time_green = green_time;
         mini_controller[2].time_green = green_time;
     }
-	
+	v_counter = calloc(6, sizeof(int));
 	//create mini_controller threads 
     if (mini_controller == NULL)
     {
@@ -117,7 +117,6 @@ int main(int argc, char ** argv)
     {
         mini_controller[i].id = i;
         mini_controller[i].min_interval = min_interval;
-        printf("Creating mini controller %d \n", i);
         rc = pthread_create(&mini_cntrl_thread_ids[i], NULL, mini_controller_routine, (void*)&mini_controller[i]);
         if (rc) 
         {
@@ -141,41 +140,34 @@ int main(int argc, char ** argv)
     {
 		sleep((int)rand() % vehicle_rate); 
 		drct = (int)rand()% 6;
-        printf("%d\n", n_vehicles);
         switch(drct)
         {
             case N2S: 
-                printf("in case %d\n", drct);
                 strncpy(vehicle[i].direction, "n2s", 4);
                 vehicle[i].id = ns_c;
                 ++ns_c;
                 break;
-            case S2N:
-                printf("in case %d\n", drct); 
+            case S2N: 
                 strncpy(vehicle[i].direction, "s2n", 4);
                 vehicle[i].id = sn_c;
                 ++sn_c;
                 break;
-            case E2W:
-                printf("in case %d\n", drct); 
+            case E2W: 
                 strncpy(vehicle[i].direction, "e2w", 4);
                 vehicle[i].id = ew_c;
                 ++ew_c;
                 break;
-            case W2E:
-                printf("in case %d\n", drct); 
+            case W2E: 
                 strncpy(vehicle[i].direction, "w2e", 4);
                 vehicle[i].id = we_c;
                 ++we_c;
                 break;
-            case N2W:
-                printf("in case %d\n", drct); 
+            case N2W: 
                 strncpy(vehicle[i].direction, "n2w", 4);
                 vehicle[i].id = nw_c;
                 ++nw_c;
                 break;
-            case S2E:
-                printf("in case %d\n", drct); 
+            case S2E: 
                 strncpy(vehicle[i].direction, "s2e", 4);
                 vehicle[i].id = se_c;
                 ++se_c;
@@ -184,7 +176,6 @@ int main(int argc, char ** argv)
                 fprintf(stderr, "Vehicle doesn't have direction %d\n", drct);
                 exit(7);
         }
-        printf("Creating a vehicle of direction %s\n...creating thread\n", vehicle[i].direction);
 		rc = pthread_create(&vehicle_thread_ids[i], NULL, vehicle_routine, (void *)&vehicle[i]);
 		if (rc) {
 			printf("ERROR; return code from pthread_create(vehicle) is %d\n", rc);
@@ -192,9 +183,18 @@ int main(int argc, char ** argv)
 		}
     }	
 	//join and terminating threads.
+    //count the cars that join
     for(i = 0; i < n_vehicles; ++i){
         pthread_join(vehicle_thread_ids[i], NULL);
     }
+    int sumT = 0;
+    for(i=0;i<6;++i){
+        printf("%s : %d\n", directions[i], v_counter[i]);
+        sumT += v_counter[i];
+    }
+    printf("Total returning are: %d\n", sumT);
+
+    printf("\n");
     for(i = 0;i < n_cntrls; ++i){
         pthread_cancel(mini_cntrl_thread_ids[i]);
     }
@@ -202,6 +202,7 @@ int main(int argc, char ** argv)
     //destroy mutex and condition variable objects
  
     pthread_mutex_destroy(&intersection_mutex);
+    pthread_mutex_destroy(&counter_mutex);
     pthread_cond_destroy(&ns_mini_cntrl);
     pthread_cond_destroy(&ew_mini_cntrl);
     pthread_cond_destroy(&turn_mini_cntrl);
@@ -215,10 +216,25 @@ int main(int argc, char ** argv)
 }
 
 void * mini_controller_routine(void * arg) {
-    printf("Mini controller routine exists!\n");
+    mini_cntrl_t * c = (mini_cntrl_t*)arg;
+    printf("Mini controller %d exists!\n", c->id);
 }
 
 void * vehicle_routine(void * arg){
-    printf("Vehicle routine exists!\n");
+    vehicle_t *v = (vehicle_t*)arg;
+    pthread_mutex_lock(&counter_mutex);
+    if(!strncmp(v->direction, "n2s", 4))
+        ++v_counter[N2S];
+    else if(!strncmp(v->direction, "s2n", 4))
+        ++v_counter[S2N];
+    else if(!strncmp(v->direction, "e2w", 4))
+        ++v_counter[E2W];
+    else if(!strncmp(v->direction, "w2e", 4))
+        ++v_counter[W2E];
+    else if(!strncmp(v->direction, "n2w", 4))
+        ++v_counter[N2W];
+    else if(!strncmp(v->direction, "s2e", 4))
+        ++v_counter[S2E];
+    pthread_mutex_unlock(&counter_mutex);
 }
 
