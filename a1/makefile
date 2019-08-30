@@ -1,10 +1,10 @@
-all: traffic_controller.exe
+all: solution.exe
 
-traffic_controller.exe: traffic_controller.o
-	 gcc -o traffic_controller.exe traffic_lights_template.o -lpthread
+solution.exe: solution.o
+	 gcc -Wall -pedantic -std=c11 solution.c logger.c -o binary -lpthread
 
-traffic_controller.o: traffic_lights_template.c
-	 gcc -c traffic_lights_template.c -lpthread
+solution.o: solution.c
+	 gcc -c solution.c logger.c -lpthread
      
 clean:
-	 rm traffic_lights_template.o traffic_controller.exe
+	 rm solution.o solution.exe
