@@ -83,8 +83,7 @@ int main(int argc, char ** argv)
 	sleep(total_time);
 	
 	//Time is up and "the children's parent" calls the children to stop playing, i.e., terminate child threads.
-    for (k = 0; k<2; k++) 
-    {
+    for (k = 0; k<2; k++) {
 		pthread_cancel(child_thrd_id[k]); 
     }
 
