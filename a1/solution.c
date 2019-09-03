@@ -5,246 +5,225 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-#include "logger.h"
 
-/*
-ctl is short for mini controller
-dn is short for direction, dns is short for directions
+//mini_controller and vehicle structs
+//you may make changes if necessary
 
-*/
-
-typedef struct controller_object{
+typedef struct mini_controller_object
+{
     int id;
     int time_green;
 	int min_interval;
-    int dns[2];
-} ctl_t;
+} mini_cntrl_t;
 
-typedef struct vehicle_object{
+typedef struct vehicle_object
+{
     int id;
-    int dn; //direction is an int. it can be used to reference the char.
+    char direction[4];
 } vehicle_t;
 
-typedef struct intersection_data{
-    int n_vehicles; //total number of vehicles
-    int vehicle_rate; //vehicle arrival rate to the intersection
-    int min_interval; // min time interval between two consecutive vehicles to pass the intersection
-    int *time_green; // the amount of time the lights stay green
-}is_t;
 
-//intersection specific helpers
-enum direction{N2S, S2N, E2W, W2E, N2W, S2E}dn;
+void * mini_controller_routine(void *);
+void * vehicle_routine(void *);
 
-char dns[6][4] = {"n2s", "s2n", "e2w", "w2e", "n2w", "s2e"};
-int v_counter[6] = {0,0,0,0,0,0}; //counts the number of vehicles created
-int vt_counter[6] = {0,0,0,0,0,0}; //counts the number of vehicle threads initialised
-
-pthread_mutex_t intersection_mutex = PTHREAD_MUTEX_INITIALIZER; //mutex to ensure only one controller has the intersection at a time
-pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER; //mutex so threads can increase counter atomically
+//declare global mutex and condition variables
+pthread_mutex_t is_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t vehicle_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-pthread_cond_t *cond_ctls; //contains the three condition controls in order, trunk, minor, turn
-pthread_cond_t *cond_vehicles; //contains six condition controls in order: trunk, minor, turn
+pthread_cond_t is_cond;
+pthread_cond_t n2s, s2n, e2w, w2e, n2w, s2e;
+pthread_cond_t dir_conds[6];
+char d_str[6][4] = {"n2s", "s2n", "e2w", "w2e", "n2w", "s2e"}; 
 
-void * controller_routine(void *);
-void * vehicle_routine(void *);
-void init_intersection(is_t*, char**);
-void init_controllers(ctl_t*, is_t*);
-void init_vehicles(vehicle_t*, is_t*);
-int check_vehicles();
-void signal_vehicles(ctl_t*);
 
-int main(int argc, char ** argv){
-    is_t *is_data = calloc(1, sizeof(is_data)); //core intersection data
-    ctl_t *controller = calloc(3, sizeof(ctl_t)); //An array of controllers
-    vehicle_t *vehicle = calloc(is_data->n_vehicles, sizeof(vehicle_t)); //An array of vehicles.
-    pthread_t *vehicle_tids = calloc(is_data->n_vehicles, sizeof(pthread_t));
-    pthread_t *ctl_tids = calloc(3, sizeof(pthread_t));
-    cond_ctls = calloc(3, sizeof(pthread_cond_t));
-    cond_vehicles = calloc(is_data->n_vehicles, sizeof(pthread_cond_t));
-    int i; //response code, indexer and current dn
-    
-    //Initialise all necessary stuff for intersection.
-    init_intersection(is_data, argc == 7 ? argv : NULL);
-    init_controllers(controller, is_data);
-    init_vehicles(vehicle, is_data);
+int main(int argc, char ** argv)
+{
+    int n_vehicles; //total number of vehicles
+	int vehicle_rate; //vehicle arrival rate to the intersection
+	int min_interval; // min time interval between two consecutive vehicles to pass the intersection
+    int i, rc, g_t;
 
-    //Do a check to make sure things were initialised properly.
-    if(controller == NULL || vehicle == NULL || ctl_tids == NULL || vehicle_tids == NULL){
-        logger("ERROR", "Iniitalisation failed");
+    pthread_cond_init(&is_cond, NULL);
+
+    pthread_cond_init(&n2s, NULL);
+    pthread_cond_init(&s2n, NULL);
+    pthread_cond_init(&e2w, NULL);
+    pthread_cond_init(&w2e, NULL);
+    pthread_cond_init(&n2w, NULL);
+    pthread_cond_init(&s2e, NULL);
+
+    dir_conds[0] = n2s; 
+    dir_conds[1] = s2n; 
+    dir_conds[2] = e2w; 
+    dir_conds[3] = w2e; 
+    dir_conds[4] = n2w; 
+    dir_conds[5] = s2e; 
+
+	//allocate memory for mini_controllers 
+	pthread_t *mini_controller_thrd_id = malloc(3 * sizeof(pthread_t)); //system thread ids
+    if (mini_controller_thrd_id == NULL)
+    {
+        fprintf(stderr, "mini_controlle_thrds_id out of memory\n");
         exit(1);
     }
+    mini_cntrl_t *mini_controller = malloc(3 * sizeof(mini_cntrl_t)); //mini_controller objects
+    if (mini_controller == NULL)
+    {
+        fprintf(stderr, "mini_controller out of memory\n");
+        exit(1);
+    }
+	// input parameters
+    // ask for the total number of vehicles.
+    printf("Enter the total number of vehicles (int): ");
+    scanf("%d", &n_vehicles);
 
-    //Create mini-controller threads
-    for(i = 0; i< 3; ++i){
-        int rc = pthread_create(&ctl_tids[i], NULL, controller_routine, (void*)&controller[i]);
-            if(rc) {
-                logger("ERROR", "controller thread was not created");
-                exit(2);
-            }
-    }
-    //Create vehicle threads.
-    for(i = 0; i < is_data->n_vehicles; ++i){
-        int rc = pthread_create(&vehicle_tids[i], NULL, vehicle_routine, (void *)&vehicle[i]);
-        if (rc) {
-            logger("ERROR", "Unable to create vehicle thread");
-            exit(2);
-        }
-    }
-    //Join mini-controller threads
-    for(i=0;i<3;++i)
-        pthread_join(ctl_tids[i], NULL);
-    //cancel any remaining vehicles
-    for(i = 0; i < is_data->n_vehicles; ++i)
-        pthread_cancel(vehicle_tids[i]);
+	//ask for vehicles' arrival rate to the intersection
+	printf("Enter vehicles arrival rate (int): \n");
+	scanf("%d", &vehicle_rate);
 	
-    check_vehicles();
-    //destroy mutex and condition variable objects 
-    pthread_mutex_destroy(&intersection_mutex);
-    pthread_mutex_destroy(&counter_mutex);
-    for(i = 0;i < 3;++i){
-        pthread_cond_destroy(cond_ctls[i]);
-    }
-    free(is_data);
-    free(vehicle);
-    free(controller);
-    free(ctl_tids);
-    free(vehicle_tids);
+	//ask for the minimum time interval t (in seconds) between any two 
+	//consecutive vehicles in one direction to pass through the intersection
+	printf("Enter minimum interval between two consecutive vehicles (int): \n");
+	scanf("%d", &min_interval);
+	
+    //ask for green time for each mini_controller
+    printf("Enter green time for forward-moving vehicles on trunk road (int): ");
+    scanf("%d", &g_t);
+    mini_controller[0].time_green = g_t;
+    printf("Enter green time for vehicles on minor road (int): ");
+    scanf("%d", &g_t);
+    mini_controller[1].time_green = g_t;	
+    printf("Enter green time for right-turning vehicles on trunk road (int): ");
+    scanf("%d", &g_t);
+    mini_controller[2].time_green = g_t;
+	
 
+	//allocate memory for vehicles 
+    vehicle_t* vehicle = calloc(n_vehicles, sizeof(vehicle_t));
+    pthread_t* vehicle_tid = calloc(n_vehicles, sizeof(pthread_t));
+	int v_count[6] = {0,0,0,0,0,0};
+    //create mini_controller threads 
+    for(i=0;i<3;++i){
+        mini_controller[i].id = i;
+        mini_controller[i].min_interval = min_interval;
+        rc = pthread_create(&mini_controller_thrd_id[i], NULL, mini_controller_routine, (void *)&mini_controller[i]);
+		if (rc) {
+			printf("ERROR; return code from pthread_create() (consumer) is %d\n", rc);
+			exit(-1);
+		}    }
+	//create vehicles threads
+	srand(time(0));
+    for (i = 0; i<n_vehicles; i++)
+    {
+		sleep((int)rand() % vehicle_rate); 
+		int d = (int)rand()% 6;
+        strncpy(vehicle[i].direction, d_str[d], 4);
+        vehicle[i].id = v_count[d];
+        ++v_count[d];
+		rc = pthread_create(&vehicle_tid[i], NULL, vehicle_routine, (void *)&vehicle[i]);
+		if (rc) {
+			printf("ERROR; return code from pthread_create() (consumer) is %d\n", rc);
+			exit(-1);
+		}
+    }
+    
+	//join and terminating threads.
+    for(i=0;i<3;++i)
+    {
+        pthread_join(mini_controller_thrd_id[i], NULL);
+    }
+
+    for(i=0;i<n_vehicles;++i)
+    {
+        pthread_join(vehicle_tid[i], NULL);
+    }
+
+    //deallocate allocated memory
+    free(mini_controller_thrd_id);
+    free(mini_controller);
+    free(vehicle);
+    free(vehicle_tid);
+	
+    //destroy mutex and condition variable objects
+    pthread_mutex_destroy(&vehicle_mutex);
+    pthread_mutex_destroy(&is_mutex);
+    pthread_cond_destroy(&is_cond);
+    pthread_cond_destroy(&n2s);
+    pthread_cond_destroy(&s2n);
+    pthread_cond_destroy(&e2w);
+    pthread_cond_destroy(&w2e);
+    pthread_cond_destroy(&n2w);
+    pthread_cond_destroy(&s2e);
+	
     exit(0);
 }
 
-void signal_vehicles(ctl_t* c){
-    clock_t begin = clock();
-    int curr;
-    do{
-        fprintf(stdout, "%d Signalling vehicles...\n", c->id);
-        sleep(c->min_interval);
-        curr = (int)(clock()-begin)/CLOCKS_PER_SEC;
-    }while(curr < c->time_green);
-    return;
-} 
-void * controller_routine(void * arg) {
-    ctl_t * c = (ctl_t*)arg;
-    fprintf(stdout, "Traffic light mini-controller %s %s: Initialization complete. I am ready.\n", dns[c->id*2], dns[c->id*2+1]);
+void * mini_controller_routine(void * arg)
+{   
+    mini_cntrl_t* c = (mini_cntrl_t*)arg;
+    fprintf(stdout, "Traffic light mini-controller %s %s: Initialization complete. I am ready.\n", \
+        d_str[c->id*2], d_str[c->id*2+1]);
     if(!c->id)
-        pthread_mutex_lock(&intersection_mutex);
-    else
-        pthread_cond_wait(&cond_ctls[0], &intersection_mutex);
+    {
+        pthread_mutex_lock(&is_mutex);
+    } else 
+    {
+        pthread_cond_wait(&is_cond, &is_mutex);
+        pthread_mutex_lock(&is_mutex);
+    }
+    int dir_idx[2] = {c->id*2, c->id*2+1};
+    char* dir[2] = {d_str[dir_idx[0]], d_str[dir_idx[1]]};
     while(1){
         fprintf(stdout, "The traffic lights %s %s have changed to green.\n", \
-            dns[c->id*2], dns[c->id*2+1]);
-        signal_vehicles(c);
-        // sleep(c->time_green);
+            dir[0], dir[1]);
+        //Signal vehicles
+        clock_t begin = clock();
+        int curr;
+        do{
+            // fprintf(stdout, "signalling\n");
+            pthread_cond_signal(&dir_conds[dir_idx[0]]);
+            pthread_cond_signal(&dir_conds[dir_idx[1]]);
+            sleep(c->min_interval);
+            curr = (int)(clock()-begin)/CLOCKS_PER_SEC;
+        }while(curr < c->time_green);
         fprintf(stdout, "The traffic lights %s %s will change to red now.\n\n",\
-            dns[c->id*2], dns[c->id*2+1]);
-        pthread_cond_signal(&cond_ctls[0]);
-        // pthread_mutex_unlock(&intersection_mutex);
-        pthread_cond_wait(&cond_ctls[0], &intersection_mutex);
+            dir[0], dir[1]);
+        pthread_cond_signal(&is_cond);
+        pthread_mutex_unlock(&is_mutex);
+        pthread_cond_wait(&is_cond, &is_mutex);
     }
+
+
     return (void*)c;
 }
-void * vehicle_routine(void * arg){
-    vehicle_t *v = (vehicle_t*)arg;
-    //Counter stuff for checking later.
-    // fprintf(stdout, "Vehicle %d %s has arrived at the intersection\n", v->id, dns[v->dn]);
-    // fprintf(stdout, "Vehicle %d %s is proceeding through the intersection.\n", v->id, dns[v->dn]);
-    // pthread_mutex_lock(&vehicle_mutex);
-    // pthread_cond_wait(&cond_vehicles[v->dn], &vehicle_mutex);
-    // pthread_mutex_unlock(&vehicle_mutex);
+int dir_to_int(char c[4]){
+    int i, found=-1;
+    for(i = 0;i < 6;++i){
+        if(strncmp(d_str[i], c, 4) == 0){
+            found=1;
+            break;
+        }
+    }
+    if(found==-1){
+        return -1;
+    }
+    return i;
+}
+
+void * vehicle_routine(void * arg)
+{
+    vehicle_t* v = (vehicle_t*)arg;
+    int dir_idx = dir_to_int(v->direction);
+    if(dir_idx == -1){
+        fprintf(stderr, "The diretion doesn't exist\n");
+        exit(-1);
+    }
+    fprintf(stdout, "Vehicle %d %s %d has arrived at the intersection\n", \
+        v->id, v->direction, dir_idx);
+    pthread_mutex_lock(&vehicle_mutex);
+    pthread_cond_wait(&(dir_conds[dir_idx]), &vehicle_mutex);
+    fprintf(stdout, "Vehicle %d %s is proceeding through the intersection.\n", v->id, v->direction);
+    pthread_mutex_unlock(&vehicle_mutex);
     return (void*)v;
 }
 
-
-
-void init_intersection(is_t* is_data, char** argv){
-    if(is_data == NULL){
-        logger("ERROR", "is_data memory not able to be allocated");
-        exit(2);
-    }
-    int g_t;
-    is_data->time_green = calloc(3, sizeof(int));
-    //*****MAKE SURE I REMOVE THIS BEFORE SUBMITTING!*******//
-    if(argv == NULL){
-        // ask for the total number of vehicles.
-        printf("Enter the total number of vehicles (int): ");
-        scanf("%d", &is_data->n_vehicles);
-        //ask for vehicles' arrival rate to the intersection
-        printf("Enter vehicles arrival rate (int): ");
-        scanf("%d", &is_data->vehicle_rate);
-        //ask for the minimum time interval t (in seconds) between any two 
-        //consecutive vehicles in one dn to pass through the intersection
-        printf("Enter minimum interval between two consecutive vehicles (int): ");
-        scanf("%d", &is_data->min_interval);
-        //ask for green time for each controller
-        printf("Enter green time for forward-moving vehicles on trunk road (int): ");
-        scanf("%d", &g_t);
-        is_data->time_green[0] = g_t;
-        printf("Enter green time for vehicles on minor road (int): ");
-        scanf("%d", &g_t);
-        is_data->time_green[1] = g_t;	
-        printf("Enter green time for right-turning vehicles on trunk road (int): ");
-        scanf("%d", &g_t);
-        is_data->time_green[2] = g_t;
-     } else {
-        is_data->n_vehicles = atoi(argv[1]);
-        is_data->vehicle_rate = atoi(argv[2]);
-        is_data->min_interval = atoi(argv[3]);
-        is_data->time_green[0] = atoi(argv[4]);
-        is_data->time_green[1] = atoi(argv[5]);
-        is_data->time_green[2] = atoi(argv[6]);
-    }
-    printf("Intersection data %d %d %d %d %d %d\n", \
-        is_data->n_vehicles, is_data->vehicle_rate, is_data->min_interval, \
-        is_data->time_green[0], is_data->time_green[1], is_data->time_green[2]);
-}
-
-void init_controllers(ctl_t* controller, is_t *is_data){
-    int rc1, rc2, i;
-    for(i=0;i<3;++i){
-        rc1 = pthread_cond_init(&cond_ctls[i], NULL);
-        rc2 = pthread_cond_init(&cond_vehicles[i], NULL);
-        if(rc1 || rc2){
-            logger("ERROR", "controller condition threads didn't initialise");
-            exit(1);
-        }
-    }
-    logger("INFO", "conditions initialized");
-    for(i=0; i<is_data->n_vehicles;++i){
-        controller[i].id = i;
-        controller[i].min_interval = is_data->min_interval;
-        controller[i].time_green = is_data->time_green[i];
-        controller[i].dns[0] = i*2;
-        controller[i].dns[1] = i*2+1;
-    }
-    return;
-}
-
-void init_vehicles(vehicle_t* vehicle, is_t* is_data){
-    if(vehicle == NULL || is_data == NULL){
-        logger("ERROR", "data passed to init_vehicles is incorrect");
-        exit(2);
-    }    
-    srand(time(0));
-    for(int i = 0; i < is_data->n_vehicles; ++i){
-		sleep((int)rand()%is_data->vehicle_rate); 
-		int dn = (int)rand()% 6; 
-        vehicle[i].dn = dn;
-        vehicle[i].id = v_counter[dn];
-        ++v_counter[dn];
-        logger("INFO", "VEHICLE initialised");
-    }	
-}
-
-//To be completed. Meant to help with debugging.
-int check_vehicles(){
-    //Run checksums on the vehicle 
-    int i, sumT = 0;
-
-    for(i=0;i<6;++i){
-        printf("%s : %d\n", dns[i], v_counter[i]);
-        sumT += v_counter[i];
-    }
-    printf("Total returning are: %d\n", sumT);
-    return 0;
-}

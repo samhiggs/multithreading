@@ -1,7 +1,9 @@
 all: solution.exe
+
 test: test_env.exe
+
 solution.exe: solution.o
-	 gcc -Wall -pedantic -std=c11 solution.c logger.c -o binary -lpthread
+	 gcc -Wall -pedantic -std=c11 -g solution.c logger.c -o binary -lpthread
 
 solution.o: solution.c
 	 gcc -c solution.c logger.c -lpthread
