@@ -7,7 +7,18 @@
 #include <unistd.h>
 
 #define OUT stdout
+/*
+REQUIREMENTS
+[X] Trunk road NS must start
+[X] Green is for X seconds
+[X] two seconds between red + green
+[X] traffic light cycle continues 
+    until there are no more vehicles to serve
+[X] Vehicles comply with directions
+[X] 3 controllers
+[X] arrival rate
 
+*/
 //mini_controller and vehicle structs
 //you may make changes if necessary
 //ucp0.ug.it.usyd.edu.au
@@ -33,10 +44,6 @@ pthread_mutex_t is_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t vehicle_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-pthread_cond_t is_cond0;
-pthread_cond_t is_cond1;
-pthread_cond_t is_cond2;
-pthread_cond_t n2s, s2n, e2w, w2e, n2w, s2e;
 pthread_cond_t dir_conds[6];
 pthread_cond_t cont_conds[3];
 char d_str[6][4] = {"n2s", "s2n", "e2w", "w2e", "n2w", "s2e"}; 
@@ -53,29 +60,6 @@ int main(int argc, char ** argv)
     if(fp == NULL){
         fprintf(stderr, "Unable to open file.\n");
     }
-
-    pthread_cond_init(&is_cond0, NULL);
-    pthread_cond_init(&is_cond1, NULL);
-    pthread_cond_init(&is_cond2, NULL);
-
-    cont_conds[0] = is_cond0;
-    cont_conds[1] = is_cond1;
-    cont_conds[2] = is_cond2;
-
-    pthread_cond_init(&n2s, NULL);
-    pthread_cond_init(&s2n, NULL);
-    pthread_cond_init(&e2w, NULL);
-    pthread_cond_init(&w2e, NULL);
-    pthread_cond_init(&n2w, NULL);
-    pthread_cond_init(&s2e, NULL);
-
-    dir_conds[0] = n2s; 
-    dir_conds[1] = s2n; 
-    dir_conds[2] = e2w; 
-    dir_conds[3] = w2e; 
-    dir_conds[4] = n2w; 
-    dir_conds[5] = s2e; 
-
 
 	//allocate memory for mini_controllers 
 	pthread_t *mini_controller_thrd_id = malloc(3 * sizeof(pthread_t)); //system thread ids
@@ -119,6 +103,12 @@ int main(int argc, char ** argv)
 	//allocate memory for vehicles 
     vehicle_t* vehicle = calloc(n_vehicles, sizeof(vehicle_t));
     pthread_t* vehicle_tid = calloc(n_vehicles, sizeof(pthread_t));
+    for(i=0;i<3;++i){
+        rc = pthread_cond_init(&cont_conds[i], NULL);
+    } 
+    for(i=0;i<6;++i){
+        pthread_cond_init(&dir_conds[i], NULL);
+    }
 	int v_count[6] = {0,0,0,0,0,0};
     //create mini_controller threads 
     for(i=0;i<3;++i){
@@ -128,8 +118,10 @@ int main(int argc, char ** argv)
 		if (rc) {
 			fprintf(OUT, "ERROR; return code from pthread_create() (consumer) is %d\n", rc);
 			exit(-1);
-		}    }
+		}    
+    }
 	//create vehicles threads
+
 	srand(time(0));
     for (i = 0; i<n_vehicles; i++)
     {
@@ -156,12 +148,9 @@ int main(int argc, char ** argv)
         --vehicle_count[dir_to_int(v->direction)];
         pthread_mutex_unlock(&counter_mutex);
     }
-    fprintf(OUT, "Vehicles Joined: %d %d %d %d %d %d\n", \
-    vehicle_count[0], vehicle_count[1], vehicle_count[2], \
-    vehicle_count[3], vehicle_count[4], vehicle_count[5]);
     for(i=0;i<3;++i)
     {
-        pthread_join(mini_controller_thrd_id[i], NULL);
+        pthread_cancel(mini_controller_thrd_id[i]);
     }
 
     //deallocate allocated memory
@@ -175,19 +164,21 @@ int main(int argc, char ** argv)
     pthread_mutex_destroy(&is_mutex);
     pthread_mutex_destroy(&counter_mutex);
     
-    pthread_cond_destroy(&is_cond0);
-    pthread_cond_destroy(&is_cond1);
-    pthread_cond_destroy(&is_cond2);
-
-    pthread_cond_destroy(&n2s);
-    pthread_cond_destroy(&s2n);
-    pthread_cond_destroy(&e2w);
-    pthread_cond_destroy(&w2e);
-    pthread_cond_destroy(&n2w);
-    pthread_cond_destroy(&s2e);
-
+    for(i=0;i<3;++i){
+        rc = pthread_cond_destroy(&cont_conds[i]);
+        if(rc){
+			fprintf(OUT, "ERROR; return code from pthread_create() (consumer) is %d\n", rc);
+			exit(-1);
+        }
+    }
+    for(i=0;i<6;++i){
+        rc = pthread_cond_destroy(&dir_conds[i]);
+            if(rc){
+                fprintf(OUT, "ERROR; return code from pthread_create() (consumer) is %d\n", rc);
+                exit(-1);
+            }
+    }
     fclose(fp);
-	
     exit(0);
 }
 
@@ -196,16 +187,14 @@ void * mini_controller_routine(void * arg)
     mini_cntrl_t* c = (mini_cntrl_t*)arg;
     int dir_idx[2] = {c->id*2, c->id*2+1};
     char* dir[2] = {d_str[dir_idx[0]], d_str[dir_idx[1]]};
+    int i = c->id;
     fprintf(OUT, "Traffic light %d mini-controller %s %s: Initialization complete. I am ready.\n", \
         c->id, dir[0], dir[1]);
     if(c->id==0){
         pthread_mutex_lock(&is_mutex);
-    } else if(c->id == 1){
-        pthread_cond_wait(&is_cond1, &is_mutex);
     } else {
-        pthread_cond_wait(&is_cond2, &is_mutex);
+        pthread_cond_wait(&cont_conds[i], &is_mutex);
     }
-        // pthread_mutex_lock(&is_mutex);
     while(1){
         fprintf(OUT, "The traffic lights %s %s have changed to green.\n", \
             dir[0], dir[1]);
@@ -213,7 +202,6 @@ void * mini_controller_routine(void * arg)
         clock_t begin = clock();
         int curr;
         do{
-            // fprintf(OUT, "signalling\n");
             pthread_cond_signal(&dir_conds[dir_idx[0]]);
             pthread_cond_signal(&dir_conds[dir_idx[1]]);
             sleep(c->min_interval);
@@ -222,23 +210,10 @@ void * mini_controller_routine(void * arg)
 
         fprintf(OUT, "The traffic lights %s %s will change to red now.\n\n",\
             dir[0], dir[1]);
-        
-        if(c->id==0){
-            pthread_cond_signal(&is_cond1);
-            pthread_cond_wait(&is_cond0, &is_mutex);
-        }
-        if(c->id==1){
-            pthread_cond_signal(&is_cond2);
-            pthread_cond_wait(&is_cond1, &is_mutex);
-        }
-        if(c->id==2){
-            pthread_cond_signal(&is_cond0);
-            pthread_cond_wait(&is_cond2, &is_mutex);
-        }
-        // pthread_mutex_unlock(&is_mutex);
+        sleep(2);
+        pthread_cond_signal(&cont_conds[(i+1)%3]);
+        pthread_cond_wait(&cont_conds[i], &is_mutex);
     }
-
-
     return (void*)c;
 }
 int dir_to_int(char c[4]){
@@ -262,12 +237,8 @@ void * vehicle_routine(void * arg)
     pthread_mutex_lock(&counter_mutex);
     ++vehicle_count[dir_idx];
     pthread_mutex_unlock(&counter_mutex);
-    if(dir_idx == -1){
-        fprintf(stderr, "The diretion doesn't exist\n");
-        exit(-1);
-    }
-    fprintf(OUT, "Vehicle %d %s %d has arrived at the intersection\n", \
-        v->id, v->direction, dir_idx);
+    fprintf(OUT, "Vehicle %d %s has arrived at the intersection\n", \
+        v->id, v->direction);
     pthread_mutex_lock(&vehicle_mutex);
     pthread_cond_wait(&(dir_conds[dir_idx]), &vehicle_mutex);
     fprintf(OUT, "Vehicle %d %s is proceeding through the intersection.\n", v->id, v->direction);
